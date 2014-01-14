@@ -581,6 +581,8 @@ x86/x86/dump_machdep.c		standard
 x86/x86/fdt_machdep.c		optional fdt
 x86/x86/intr_machdep.c		standard
 x86/x86/io_apic.c		optional apic
+x86/x86/pvclock.c		standard
+x86/x86/kvmclock.c		standard
 x86/x86/legacy.c		optional native
 x86/x86/local_apic.c		optional apic
 x86/x86/mca.c			standard

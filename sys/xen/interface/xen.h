@@ -530,33 +530,6 @@ DEFINE_XEN_GUEST_HANDLE(multicall_entry_t);
  */
 #define NR_EVENT_CHANNELS (sizeof(unsigned long) * sizeof(unsigned long) * 64)
 
-struct vcpu_time_info {
-    /*
-     * Updates to the following values are preceded and followed by an
-     * increment of 'version'. The guest can therefore detect updates by
-     * looking for changes to 'version'. If the least-significant bit of
-     * the version number is set then an update is in progress and the guest
-     * must wait to read a consistent set of values.
-     * The correct way to interact with the version number is similar to
-     * Linux's seqlock: see the implementations of read_seqbegin/read_seqretry.
-     */
-    uint32_t version;
-    uint32_t pad0;
-    uint64_t tsc_timestamp;   /* TSC at last update of time vals.  */
-    uint64_t system_time;     /* Time, in nanosecs, since boot.    */
-    /*
-     * Current system time:
-     *   system_time +
-     *   ((((tsc - tsc_timestamp) << tsc_shift) * tsc_to_system_mul) >> 32)
-     * CPU frequency (Hz):
-     *   ((10^9 << 32) / tsc_to_system_mul) >> tsc_shift
-     */
-    uint32_t tsc_to_system_mul;
-    int8_t   tsc_shift;
-    int8_t   pad1[3];
-}; /* 32 bytes */
-typedef struct vcpu_time_info vcpu_time_info_t;
-
 struct vcpu_info {
     /*
      * 'evtchn_upcall_pending' is written non-zero by Xen to indicate
@@ -587,7 +560,7 @@ struct vcpu_info {
     uint8_t evtchn_upcall_mask;
     unsigned long evtchn_pending_sel;
     struct arch_vcpu_info arch;
-    struct vcpu_time_info time;
+    struct pvclock_time_info time;
 }; /* 64 bytes (x86) */
 #ifndef __XEN__
 typedef struct vcpu_info vcpu_info_t;
