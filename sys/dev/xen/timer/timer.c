@@ -58,6 +58,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/clock.h>
 #include <machine/_inttypes.h>
 #include <machine/smp.h>
+#include <machine/pvclock.h>
 
 #include "clock_if.h"
 
@@ -145,88 +146,6 @@ xentimer_probe(device_t dev)
 	return (BUS_PROBE_NOWILDCARD);
 }
 
-/*
- * Scale a 64-bit delta by scaling and multiplying by a 32-bit fraction,
- * yielding a 64-bit result.
- */
-static inline uint64_t
-scale_delta(uint64_t delta, uint32_t mul_frac, int shift)
-{
-	uint64_t product;
-
-	if (shift < 0)
-		delta >>= -shift;
-	else
-		delta <<= shift;
-
-#if defined(__i386__)
-	{
-		uint32_t tmp1, tmp2;
-
-		/**
-		 * For i386, the formula looks like:
-		 *
-		 *   lower = (mul_frac * (delta & UINT_MAX)) >> 32
-		 *   upper = mul_frac * (delta >> 32)
-		 *   product = lower + upper
-		 */
-		__asm__ (
-			"mul  %5       ; "
-			"mov  %4,%%eax ; "
-			"mov  %%edx,%4 ; "
-			"mul  %5       ; "
-			"xor  %5,%5    ; "
-			"add  %4,%%eax ; "
-			"adc  %5,%%edx ; "
-			: "=A" (product), "=r" (tmp1), "=r" (tmp2)
-			: "a" ((uint32_t)delta), "1" ((uint32_t)(delta >> 32)),
-			  "2" (mul_frac) );
-	}
-#elif defined(__amd64__)
-	{
-		unsigned long tmp;
-
-		__asm__ (
-			"mulq %[mul_frac] ; shrd $32, %[hi], %[lo]"
-			: [lo]"=a" (product), [hi]"=d" (tmp)
-			: "0" (delta), [mul_frac]"rm"((uint64_t)mul_frac));
-	}
-#else
-#error "xentimer: unsupported architecture"
-#endif
-
-	return (product);
-}
-
-static uint64_t
-get_nsec_offset(struct vcpu_time_info *tinfo)
-{
-
-	return (scale_delta(rdtsc() - tinfo->tsc_timestamp,
-	    tinfo->tsc_to_system_mul, tinfo->tsc_shift));
-}
-
-/*
- * Read the current hypervisor system uptime value from Xen.
- * See <xen/interface/xen.h> for a description of how this works.
- */
-static uint32_t
-xen_fetch_vcpu_tinfo(struct vcpu_time_info *dst, struct vcpu_time_info *src)
-{
-
-	do {
-		dst->version = src->version;
-		rmb();
-		dst->tsc_timestamp = src->tsc_timestamp;
-		dst->system_time = src->system_time;
-		dst->tsc_to_system_mul = src->tsc_to_system_mul;
-		dst->tsc_shift = src->tsc_shift;
-		rmb();
-	} while ((src->version & 1) | (dst->version ^ src->version));
-
-	return (dst->version);
-}
-
 /**
  * \brief Get the current time, in nanoseconds, since the hypervisor booted.
  *
@@ -238,7 +157,6 @@ xen_fetch_vcpu_time(void)
 {
 	struct vcpu_time_info dst;
 	struct vcpu_time_info *src;
-	uint32_t pre_version;
 	uint64_t now;
 	volatile uint64_t last;
 	struct vcpu_info *vcpu = DPCPU_GET(vcpu_info);
@@ -246,12 +164,9 @@ xen_fetch_vcpu_time(void)
 	src = &vcpu->time;
 
 	critical_enter();
-	do {
-		pre_version = xen_fetch_vcpu_tinfo(&dst, src);
-		barrier();
-		now = dst.system_time + get_nsec_offset(&dst);
-		barrier();
-	} while (pre_version != src->version);
+
+        pvclock_fetch_vcpu_tinfo(&dst, src);
+        now = pvclock_get_nsec(&dst);
 
 	/*
 	 * Enforce a monotonically increasing clock time across all
